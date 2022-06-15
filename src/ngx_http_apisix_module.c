@@ -661,7 +661,7 @@ ngx_http_apisix_in_proxy_hide_headers(ngx_http_request_t *r, ngx_table_elt_t *h,
     }
 
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                   "apisix hide_headers name:%s", h[i].lowcase_key);
+                   "apisix hide_headers name:%s", h->lowcase_key);
 
     if (ngx_hash_find(&ctx->hide_headers_hash, h->hash,
                       h->lowcase_key, h->key.len))
