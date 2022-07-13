@@ -1,5 +1,5 @@
---- a/src/core/ngx_thread_pool.c
-+++ b/src/core/ngx_thread_pool.c
+--- src/core/ngx_thread_pool.c
++++ src/core/ngx_thread_pool.c
 @@ -587,7 +587,8 @@
      ngx_thread_pool_conf_t   *tcf;
  
