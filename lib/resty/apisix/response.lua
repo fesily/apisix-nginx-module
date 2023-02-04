@@ -25,6 +25,10 @@ ngx_int_t
 ngx_http_apisix_set_proxy_ignore_headers(ngx_http_request_t *r, ngx_uint_t mask);
 ngx_int_t
 ngx_http_apisix_set_proxy_hide_headers(ngx_http_request_t *r, ngx_str_t* hide_headers);
+ngx_int_t
+ngx_http_apisix_skip_header_filter_by_lua(ngx_http_request_t *r);
+ngx_int_t
+ngx_http_apisix_skip_body_filter_by_lua(ngx_http_request_t *r);
 ]]
 
 local str_arr_t = ffi.typeof("ngx_str_t[?]")
@@ -84,5 +88,27 @@ function _M.set_proxy_hide_headers(opts)
     end
     return true
 end
+
+-- The skip_* methods must be called before any output is generated,
+-- so the flag can take effect
+function _M.skip_header_filter_by_lua()
+    local r = get_request()
+    local rc = C.ngx_http_apisix_skip_header_filter_by_lua(r)
+    if rc == NGX_ERROR then
+        return nil, "no memory"
+    end
+    return true
+end
+
+
+function _M.skip_body_filter_by_lua()
+    local r = get_request()
+    local rc = C.ngx_http_apisix_skip_body_filter_by_lua(r)
+    if rc == NGX_ERROR then
+        return nil, "no memory"
+    end
+    return true
+end
+
 
 return _M

@@ -33,6 +33,8 @@ typedef struct {
     unsigned             request_buffering:1;
     unsigned             request_buffering_set:1;
     unsigned             request_header_set:1;
+    unsigned             header_filter_by_lua_skipped:1;
+    unsigned             body_filter_by_lua_skipped:1;
 } ngx_http_apisix_ctx_t;
 
 
@@ -61,5 +63,11 @@ ngx_int_t ngx_http_apisix_set_proxy_ignore_headers(ngx_http_request_t *r, ngx_ui
 ngx_int_t ngx_http_apisix_is_proxy_hide_headers_set(ngx_http_request_t *r);
 ngx_int_t ngx_http_apisix_in_proxy_hide_headers(ngx_http_request_t *r, ngx_table_elt_t *h, ngx_uint_t *in);
 ngx_int_t ngx_http_apisix_set_proxy_hide_headers(ngx_http_request_t *r, ngx_str_t* hide_headers);
+
+ngx_int_t ngx_http_apisix_is_header_filter_by_lua_skipped(ngx_http_request_t *r);
+ngx_int_t ngx_http_apisix_is_body_filter_by_lua_skipped(ngx_http_request_t *r);
+
+ngx_flag_t ngx_http_apisix_is_ntls_enabled(ngx_http_conf_ctx_t *conf_ctx);
+
 
 #endif /* _NGX_HTTP_APISIX_H_INCLUDED_ */

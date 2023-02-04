@@ -5,12 +5,22 @@
 #include "ngx_http_apisix_module.h"
 
 
+#define NGX_HTTP_APISIX_SSL_ENC     1
+#define NGX_HTTP_APISIX_SSL_SIGN    2
+
+
+typedef struct {
+    ngx_flag_t      enable_ntls;
+} ngx_http_apisix_main_conf_t;
+
+
 static ngx_str_t remote_addr = ngx_string("remote_addr");
 static ngx_str_t remote_port = ngx_string("remote_port");
 static ngx_str_t realip_remote_addr = ngx_string("realip_remote_addr");
 static ngx_str_t realip_remote_port = ngx_string("realip_remote_port");
 
 
+static void *ngx_http_apisix_create_main_conf(ngx_conf_t *cf);
 static void *ngx_http_apisix_create_loc_conf(ngx_conf_t *cf);
 static char *ngx_http_apisix_merge_loc_conf(ngx_conf_t *cf, void *parent,
     void *child);
@@ -32,7 +42,7 @@ static ngx_http_module_t ngx_http_apisix_module_ctx = {
     NULL,                                    /* preconfiguration */
     NULL,                                    /* postconfiguration */
 
-    NULL,                                    /* create main configuration */
+    ngx_http_apisix_create_main_conf,        /* create main configuration */
     NULL,                                    /* init main configuration */
 
     NULL,                                    /* create server configuration */
@@ -57,6 +67,26 @@ ngx_module_t ngx_http_apisix_module = {
     NULL,                                /* exit master */
     NGX_MODULE_V1_PADDING
 };
+
+
+static void *
+ngx_http_apisix_create_main_conf(ngx_conf_t *cf)
+{
+    ngx_http_apisix_main_conf_t  *acf;
+
+    acf = ngx_pcalloc(cf->pool, sizeof(ngx_http_apisix_main_conf_t));
+    if (acf == NULL) {
+        return NULL;
+    }
+
+    /*
+     * set by ngx_pcalloc():
+     *
+     *     acf->enable_ntls = 0;
+     */
+
+    return acf;
+}
 
 
 static void *
@@ -718,4 +748,224 @@ ngx_http_apisix_set_proxy_hide_headers(ngx_http_request_t *r, ngx_str_t *input_h
     ctx->hide_headers = NGX_CONF_UNSET_PTR;
 
     return NGX_OK;
+}
+
+ngx_int_t
+ngx_http_apisix_skip_header_filter_by_lua(ngx_http_request_t *r)
+{
+    ngx_http_apisix_ctx_t          *ctx;
+
+    ctx = ngx_http_apisix_get_module_ctx(r);
+    if (ctx == NULL) {
+        return NGX_ERROR;
+    }
+
+    ctx->header_filter_by_lua_skipped = 1;
+    return NGX_OK;
+}
+
+
+ngx_int_t
+ngx_http_apisix_is_header_filter_by_lua_skipped(ngx_http_request_t *r)
+{
+    ngx_http_apisix_ctx_t          *ctx;
+
+    ctx = ngx_http_apisix_get_module_ctx(r);
+    if (ctx != NULL) {
+        ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                       "apisix header_filter_by_lua %p skipped: %d",
+                       ctx, ctx->header_filter_by_lua_skipped);
+
+        return ctx->header_filter_by_lua_skipped;
+    }
+
+    return 0;
+}
+
+
+ngx_int_t
+ngx_http_apisix_skip_body_filter_by_lua(ngx_http_request_t *r)
+{
+    ngx_http_apisix_ctx_t          *ctx;
+
+    ctx = ngx_http_apisix_get_module_ctx(r);
+    if (ctx == NULL) {
+        return NGX_ERROR;
+    }
+
+    ctx->body_filter_by_lua_skipped = 1;
+    return NGX_OK;
+}
+
+
+ngx_int_t
+ngx_http_apisix_is_body_filter_by_lua_skipped(ngx_http_request_t *r)
+{
+    ngx_http_apisix_ctx_t          *ctx;
+
+    ctx = ngx_http_apisix_get_module_ctx(r);
+    if (ctx != NULL) {
+        ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                       "apisix body_filter_by_lua %p skipped: %d",
+                       ctx, ctx->body_filter_by_lua_skipped);
+
+        return ctx->body_filter_by_lua_skipped;
+    }
+
+    return 0;
+}
+
+
+int
+ngx_http_apisix_set_gm_cert(ngx_http_request_t *r, void *cdata, char **err, ngx_flag_t type)
+{
+#ifndef TONGSUO_VERSION_NUMBER
+
+    *err = "only Tongsuo supported";
+    return NGX_ERROR;
+
+#else
+    int                i;
+    X509              *x509 = NULL;
+    ngx_ssl_conn_t    *ssl_conn;
+    STACK_OF(X509)    *chain = cdata;
+
+    if (r->connection == NULL || r->connection->ssl == NULL) {
+        *err = "bad request";
+        return NGX_ERROR;
+    }
+
+    ssl_conn = r->connection->ssl->connection;
+    if (ssl_conn == NULL) {
+        *err = "bad ssl conn";
+        return NGX_ERROR;
+    }
+
+    if (sk_X509_num(chain) < 1) {
+        *err = "invalid certificate chain";
+        goto failed;
+    }
+
+    x509 = sk_X509_value(chain, 0);
+    if (x509 == NULL) {
+        *err = "sk_X509_value() failed";
+        goto failed;
+    }
+
+    if (type == NGX_HTTP_APISIX_SSL_ENC) {
+        if (SSL_use_enc_certificate(ssl_conn, x509) == 0) {
+            *err = "SSL_use_enc_certificate() failed";
+            goto failed;
+        }
+    } else {
+        if (SSL_use_sign_certificate(ssl_conn, x509) == 0) {
+            *err = "SSL_use_sign_certificate() failed";
+            goto failed;
+        }
+    }
+
+    x509 = NULL;
+
+    /* read rest of the chain */
+
+    for (i = 1; i < sk_X509_num(chain); i++) {
+
+        x509 = sk_X509_value(chain, i);
+        if (x509 == NULL) {
+            *err = "sk_X509_value() failed";
+            goto failed;
+        }
+
+        if (SSL_add1_chain_cert(ssl_conn, x509) == 0) {
+            *err = "SSL_add1_chain_cert() failed";
+            goto failed;
+        }
+    }
+
+    *err = NULL;
+    return NGX_OK;
+
+failed:
+
+    ERR_clear_error();
+
+    return NGX_ERROR;
+
+#endif
+}
+
+
+int
+ngx_http_apisix_set_gm_priv_key(ngx_http_request_t *r,
+    void *cdata, char **err, ngx_flag_t type)
+{
+#ifndef TONGSUO_VERSION_NUMBER
+
+    *err = "only Tongsuo supported";
+    return NGX_ERROR;
+
+#else
+
+    EVP_PKEY          *pkey = NULL;
+    ngx_ssl_conn_t    *ssl_conn;
+
+    if (r->connection == NULL || r->connection->ssl == NULL) {
+        *err = "bad request";
+        return NGX_ERROR;
+    }
+
+    ssl_conn = r->connection->ssl->connection;
+    if (ssl_conn == NULL) {
+        *err = "bad ssl conn";
+        return NGX_ERROR;
+    }
+
+    pkey = cdata;
+    if (pkey == NULL) {
+        *err = "invalid private key failed";
+        goto failed;
+    }
+
+    if (type == NGX_HTTP_APISIX_SSL_ENC) {
+        if (SSL_use_enc_PrivateKey(ssl_conn, pkey) == 0) {
+            *err = "SSL_use_enc_PrivateKey() failed";
+            goto failed;
+        }
+    } else {
+        if (SSL_use_sign_PrivateKey(ssl_conn, pkey) == 0) {
+            *err = "SSL_use_sign_PrivateKey() failed";
+            goto failed;
+        }
+    }
+
+    return NGX_OK;
+
+failed:
+
+    ERR_clear_error();
+
+    return NGX_ERROR;
+
+#endif
+}
+
+
+int
+ngx_http_apisix_enable_ntls(ngx_http_request_t *r, int enabled)
+{
+    ngx_http_apisix_main_conf_t  *acf;
+
+    acf = ngx_http_get_module_main_conf(r, ngx_http_apisix_module);
+    acf->enable_ntls = enabled;
+    return NGX_OK;
+}
+
+
+ngx_flag_t
+ngx_http_apisix_is_ntls_enabled(ngx_http_conf_ctx_t *conf_ctx)
+{
+    ngx_http_apisix_main_conf_t  *acf;
+
+    acf = ngx_http_get_module_main_conf(conf_ctx, ngx_http_apisix_module);
+    return acf->enable_ntls;
 }
